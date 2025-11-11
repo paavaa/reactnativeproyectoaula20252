@@ -1,0 +1,5 @@
+# Ignorar carpetas del sistema
+/c/Users/
+C:/Users/
+../
+../../
