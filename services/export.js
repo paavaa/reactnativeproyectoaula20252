@@ -2,216 +2,189 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Alert } from 'react-native';
 
-/**
- * Exporta productos a formato CSV
- */
+// Exportar productos a CSV
 export async function exportToCSV(products) {
-    try {
-        if (!products || products.length === 0) {
-            Alert.alert("Error", "No hay productos para exportar");
-            return;
-        }
-
-        // Crear encabezados
-        const headers = "Nombre,Código,Cantidad,Stock Mínimo,Estado\n";
-
-        // Crear filas de datos
-        const rows = products.map(product => {
-            const status = getProductStatus(product);
-            return `"${product.name}","${product.code}",${product.quantity},${product.minStock || 0},"${status}"`;
-        }).join("\n");
-
-        const csvContent = headers + rows;
-
-        // Generar nombre de archivo con fecha
-        const fileName = `inventario_${getFormattedDate()}.csv`;
-        const fileUri = FileSystem.documentDirectory + fileName;
-
-        // Escribir archivo
-        await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-            encoding: FileSystem.EncodingType.UTF8,
-        });
-
-        // Compartir archivo
-        if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri);
-            return true;
-        } else {
-            Alert.alert("Error", "La función de compartir no está disponible en este dispositivo");
-            return false;
-        }
-    } catch (error) {
-        console.error("Error exportando CSV:", error);
-        Alert.alert("Error", "No se pudo exportar el archivo CSV");
-        return false;
+    if (!products || products.length === 0) {
+        Alert.alert("Error", "No hay productos para exportar");
+        return;
     }
-}
 
-/**
- * Exporta productos a formato PDF (texto plano formateado)
- */
-export async function exportToPDF(products) {
     try {
-        if (!products || products.length === 0) {
-            Alert.alert("Error", "No hay productos para exportar");
-            return;
+        let csv = "Nombre,Código,Cantidad,Stock Mínimo,Estado\n";
+        
+        for (let i = 0; i < products.length; i++) {
+            let product = products[i];
+            let estado = "STOCK NORMAL";
+            
+            if (product.quantity === 0) {
+                estado = "SIN STOCK";
+            } else if (product.minStock && product.quantity <= product.minStock) {
+                estado = "STOCK BAJO";
+            }
+            
+            let minStock = product.minStock || 0;
+            csv += `"${product.name}","${product.code}",${product.quantity},${minStock},"${estado}"\n`;
         }
 
-        // Crear contenido del "PDF" (realmente un TXT formateado)
-        let content = "═══════════════════════════════════════\n";
-        content += "     REPORTE DE INVENTARIO\n";
-        content += `     ${getFormattedDateTime()}\n`;
-        content += "═══════════════════════════════════════\n\n";
+        let fecha = new Date();
+        let nombreArchivo = `inventario_${fecha.getFullYear()}-${fecha.getMonth() + 1}-${fecha.getDate()}.csv`;
+        let rutaArchivo = FileSystem.documentDirectory + nombreArchivo;
 
-        // Resumen
-        const totalProducts = products.length;
-        const lowStockProducts = products.filter(p =>
-            p.minStock && p.quantity <= p.minStock
-        ).length;
-        const outOfStockProducts = products.filter(p => p.quantity === 0).length;
-        const totalQuantity = products.reduce((sum, p) => sum + (p.quantity || 0), 0);
+        await FileSystem.writeAsStringAsync(rutaArchivo, csv);
 
-        content += "RESUMEN GENERAL\n";
-        content += "───────────────────────────────────────\n";
-        content += `Total de productos:      ${totalProducts}\n`;
-        content += `Cantidad total en stock: ${totalQuantity}\n`;
-        content += `Productos sin stock:     ${outOfStockProducts}\n`;
-        content += `Productos con stock bajo: ${lowStockProducts}\n\n`;
-
-        // Alertas si hay productos con problemas
-        if (outOfStockProducts > 0 || lowStockProducts > 0) {
-            content += "⚠️  ALERTAS\n";
-            content += "───────────────────────────────────────\n";
-            if (outOfStockProducts > 0) {
-                content += `🚫 ${outOfStockProducts} producto(s) SIN STOCK\n`;
-            }
-            if (lowStockProducts > 0) {
-                content += `⚠️  ${lowStockProducts} producto(s) con STOCK BAJO\n`;
-            }
-            content += "\n";
-        }
-
-        // Detalle de productos
-        content += "DETALLE DE PRODUCTOS\n";
-        content += "═══════════════════════════════════════\n\n";
-
-        products.forEach((product, index) => {
-            const status = getProductStatus(product);
-            const statusEmoji = getStatusEmoji(product);
-
-            content += `${index + 1}. ${statusEmoji} ${product.name}\n`;
-            content += `   Código:        ${product.code}\n`;
-            content += `   Stock actual:  ${product.quantity}\n`;
-            if (product.minStock) {
-                content += `   Stock mínimo:  ${product.minStock}\n`;
-            }
-            content += `   Estado:        ${status}\n`;
-            content += "───────────────────────────────────────\n";
-        });
-
-        content += "\n═══════════════════════════════════════\n";
-        content += "Fin del reporte\n";
-        content += "═══════════════════════════════════════\n";
-
-        // Generar nombre de archivo con fecha
-        const fileName = `inventario_${getFormattedDate()}.txt`;
-        const fileUri = FileSystem.documentDirectory + fileName;
-
-        // Escribir archivo
-        await FileSystem.writeAsStringAsync(fileUri, content, {
-            encoding: FileSystem.EncodingType.UTF8,
-        });
-
-        // Compartir archivo
-        if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri);
+        let puedeCompartir = await Sharing.isAvailableAsync();
+        if (puedeCompartir) {
+            await Sharing.shareAsync(rutaArchivo);
             return true;
         } else {
-            Alert.alert("Error", "La función de compartir no está disponible en este dispositivo");
+            Alert.alert("Error", "No se puede compartir en este dispositivo");
             return false;
         }
     } catch (error) {
-        console.error("Error exportando PDF:", error);
         Alert.alert("Error", "No se pudo exportar el archivo");
         return false;
     }
 }
 
-/**
- * Exporta movimientos a CSV
- */
-export async function exportMovementsToCSV(movements) {
+// Exportar productos a PDF (realmente es un TXT)
+export async function exportToPDF(products) {
+    if (!products || products.length === 0) {
+        Alert.alert("Error", "No hay productos para exportar");
+        return;
+    }
+
     try {
-        if (!movements || movements.length === 0) {
-            Alert.alert("Error", "No hay movimientos para exportar");
-            return;
+        let texto = "";
+        texto += "═══════════════════════════════════════\n";
+        texto += "     REPORTE DE INVENTARIO\n";
+        
+        let ahora = new Date();
+        let fechaHora = ahora.toLocaleString('es-ES');
+        texto += `     ${fechaHora}\n`;
+        texto += "═══════════════════════════════════════\n\n";
+
+        // Contar productos
+        let total = products.length;
+        let sinStock = 0;
+        let stockBajo = 0;
+        let cantidadTotal = 0;
+
+        for (let i = 0; i < products.length; i++) {
+            cantidadTotal += products[i].quantity || 0;
+            
+            if (products[i].quantity === 0) {
+                sinStock++;
+            } else if (products[i].minStock && products[i].quantity <= products[i].minStock) {
+                stockBajo++;
+            }
         }
 
-        // Crear encabezados
-        const headers = "Fecha,Producto,Tipo,Cantidad,Estado Sincronización\n";
+        texto += "RESUMEN GENERAL\n";
+        texto += "───────────────────────────────────────\n";
+        texto += `Total de productos:      ${total}\n`;
+        texto += `Cantidad total en stock: ${cantidadTotal}\n`;
+        texto += `Productos sin stock:     ${sinStock}\n`;
+        texto += `Productos con stock bajo: ${stockBajo}\n\n`;
 
-        // Crear filas de datos
-        const rows = movements.map(movement => {
-            const date = new Date(movement.date).toLocaleString();
-            const type = movement.type === "entrada" ? "Entrada" : "Salida";
-            const synced = movement.synced ? "Sincronizado" : "Pendiente";
-            return `"${date}","${movement.productName}","${type}",${movement.quantity},"${synced}"`;
-        }).join("\n");
+        // Alertas
+        if (sinStock > 0 || stockBajo > 0) {
+            texto += "⚠️  ALERTAS\n";
+            texto += "───────────────────────────────────────\n";
+            if (sinStock > 0) {
+                texto += `🚫 ${sinStock} producto(s) SIN STOCK\n`;
+            }
+            if (stockBajo > 0) {
+                texto += `⚠️  ${stockBajo} producto(s) con STOCK BAJO\n`;
+            }
+            texto += "\n";
+        }
 
-        const csvContent = headers + rows;
+        texto += "DETALLE DE PRODUCTOS\n";
+        texto += "═══════════════════════════════════════\n\n";
 
-        // Generar nombre de archivo con fecha
-        const fileName = `movimientos_${getFormattedDate()}.csv`;
-        const fileUri = FileSystem.documentDirectory + fileName;
+        // Listar productos
+        for (let i = 0; i < products.length; i++) {
+            let product = products[i];
+            let estado = "STOCK NORMAL";
+            let emoji = "✅";
+            
+            if (product.quantity === 0) {
+                estado = "SIN STOCK";
+                emoji = "🚫";
+            } else if (product.minStock && product.quantity <= product.minStock) {
+                estado = "STOCK BAJO";
+                emoji = "⚠️";
+            }
 
-        // Escribir archivo
-        await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-            encoding: FileSystem.EncodingType.UTF8,
-        });
+            texto += `${i + 1}. ${emoji} ${product.name}\n`;
+            texto += `   Código:        ${product.code}\n`;
+            texto += `   Stock actual:  ${product.quantity}\n`;
+            if (product.minStock) {
+                texto += `   Stock mínimo:  ${product.minStock}\n`;
+            }
+            texto += `   Estado:        ${estado}\n`;
+            texto += "───────────────────────────────────────\n";
+        }
 
-        // Compartir archivo
-        if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri);
+        texto += "\n═══════════════════════════════════════\n";
+        texto += "Fin del reporte\n";
+        texto += "═══════════════════════════════════════\n";
+
+        let fecha = new Date();
+        let nombreArchivo = `inventario_${fecha.getFullYear()}-${fecha.getMonth() + 1}-${fecha.getDate()}.txt`;
+        let rutaArchivo = FileSystem.documentDirectory + nombreArchivo;
+
+        await FileSystem.writeAsStringAsync(rutaArchivo, texto);
+
+        let puedeCompartir = await Sharing.isAvailableAsync();
+        if (puedeCompartir) {
+            await Sharing.shareAsync(rutaArchivo);
             return true;
         } else {
-            Alert.alert("Error", "La función de compartir no está disponible en este dispositivo");
+            Alert.alert("Error", "No se puede compartir en este dispositivo");
             return false;
         }
     } catch (error) {
-        console.error("Error exportando movimientos CSV:", error);
-        Alert.alert("Error", "No se pudo exportar el archivo CSV");
+        Alert.alert("Error", "No se pudo exportar el archivo");
         return false;
     }
 }
 
-// Funciones auxiliares
-function getProductStatus(product) {
-    if (product.quantity === 0) return "SIN STOCK";
-    if (product.minStock && product.quantity <= product.minStock) return "STOCK BAJO";
-    return "STOCK NORMAL";
-}
+// Exportar movimientos a CSV
+export async function exportMovementsToCSV(movements) {
+    if (!movements || movements.length === 0) {
+        Alert.alert("Error", "No hay movimientos para exportar");
+        return;
+    }
 
-function getStatusEmoji(product) {
-    if (product.quantity === 0) return "🚫";
-    if (product.minStock && product.quantity <= product.minStock) return "⚠️";
-    return "✅";
-}
+    try {
+        let csv = "Fecha,Producto,Tipo,Cantidad,Estado Sincronización\n";
+        
+        for (let i = 0; i < movements.length; i++) {
+            let mov = movements[i];
+            let fecha = new Date(mov.date).toLocaleString();
+            let tipo = mov.type === "entrada" ? "Entrada" : "Salida";
+            let sincronizado = mov.synced ? "Sincronizado" : "Pendiente";
+            
+            csv += `"${fecha}","${mov.productName}","${tipo}",${mov.quantity},"${sincronizado}"\n`;
+        }
 
-function getFormattedDate() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
+        let fecha = new Date();
+        let nombreArchivo = `movimientos_${fecha.getFullYear()}-${fecha.getMonth() + 1}-${fecha.getDate()}.csv`;
+        let rutaArchivo = FileSystem.documentDirectory + nombreArchivo;
 
-function getFormattedDateTime() {
-    const now = new Date();
-    return now.toLocaleString('es-ES', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+        await FileSystem.writeAsStringAsync(rutaArchivo, csv);
+
+        let puedeCompartir = await Sharing.isAvailableAsync();
+        if (puedeCompartir) {
+            await Sharing.shareAsync(rutaArchivo);
+            return true;
+        } else {
+            Alert.alert("Error", "No se puede compartir en este dispositivo");
+            return false;
+        }
+    } catch (error) {
+        Alert.alert("Error", "No se pudo exportar el archivo");
+        return false;
+    }
 }
