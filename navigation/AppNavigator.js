@@ -8,8 +8,8 @@ import HomeScreen from "../screens/HomeScreen";
 import AddProductScreens from "../screens/AddProductScreens";
 import InventoryScreen from "../screens/InventoryScreen";
 import MovementScreen from "../screens/MovementScreen";
-import AlertsScreen from "@/screens/AlertsScreen";
-import ReportsScreen from "@/screens/ReportsScreen";
+import AlertsScreen from "../screens/AlertsScreen";
+import ReportsScreen from "../screens/ReportsScreen";
 
 import { useAuth } from "../contexts/MyAuthContext";
 const Stack = createNativeStackNavigator();
