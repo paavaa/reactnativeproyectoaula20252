@@ -16,6 +16,12 @@ import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../services/firebaseConfig";
 import { Colors } from '../constants/Colors';
 import { useColorScheme } from 'react-native';
+import NetInfo from "@react-native-community/netinfo";
+import { useAuth } from "../contexts/MyAuthContext";
+import {
+    verifyUserLocally,
+    saveUserLocally
+} from "../services/offline";
 
 export default function LoginScreen({ navigation }) {
     const [email, setEmail] = useState("");
@@ -23,11 +29,15 @@ export default function LoginScreen({ navigation }) {
     const [isLoading, setIsLoading] = useState(false);
     const [emailFocused, setEmailFocused] = useState(false);
     const [passwordFocused, setPasswordFocused] = useState(false);
+    const [isOnline, setIsOnline] = useState(true);
 
     const colorScheme = useColorScheme() ?? 'light';
     const colors = Colors[colorScheme];
 
-    // Animaciones
+    //obtiene updateUser del Context
+    const { updateUser } = useAuth();
+
+
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(30)).current;
 
@@ -44,7 +54,72 @@ export default function LoginScreen({ navigation }) {
                 useNativeDriver: true,
             }),
         ]).start();
+
+        //revisa conexión
+        const unsubscribe = NetInfo.addEventListener(state => {
+            setIsOnline(state.isConnected);
+        });
+
+        return () => unsubscribe();
     }, []);
+
+    const handleLoginOnline = async () => {
+        try {
+            const userCredential = await signInWithEmailAndPassword(
+                auth,
+                email,
+                password
+            );
+
+            const userData = {
+                email: userCredential.user.email,
+                uid: userCredential.user.uid,
+                isOnline: true
+            };
+
+            //actualiza context. también guarda en AsyncStorage
+            await updateUser(userData);
+
+            try {
+                await saveUserLocally(email, password);
+            } catch (e) {
+                console.log("Usuario ya existe localmente");
+            }
+
+            console.log("✅ Usuario logueado (online):", userCredential.user.email);
+            Alert.alert("Bienvenido", userCredential.user.email);
+
+
+        } catch (error) {
+            console.error("Error en login online", error.message);
+            throw error;
+        }
+    };
+
+    const handleLoginOffline = async () => {
+        try {
+            const user = await verifyUserLocally(email, password);
+
+            const userData = {
+                email: user.email,
+                uid: user.uid,
+                isOnline: false
+            };
+
+            await updateUser(userData);
+
+            console.log("✅ Usuario logueado (offline):", user.email);
+            Alert.alert(
+                "Bienvenido (Modo Offline)",
+                `${user.email}\n\nEstás trabajando sin conexión. Los cambios se sincronizarán cuando vuelvas a estar online.`
+            );
+
+
+        } catch (error) {
+            console.error("Error en login offline", error.message);
+            throw error;
+        }
+    };
 
     const handleLogin = async () => {
         if (!email || !password) {
@@ -52,20 +127,31 @@ export default function LoginScreen({ navigation }) {
             return;
         }
 
+        //intentar login
         setIsLoading(true);
         try {
-            const userCredential = await signInWithEmailAndPassword(
-                auth,
-                email,
-                password
-            );
-            console.log("Usuario logueado:", userCredential.user.email);
-            Alert.alert("Bienvenido", userCredential.user.email);
-            navigation.navigate("Home");
-
+            if (isOnline) {
+                await handleLoginOnline();
+            } else {
+                await handleLoginOffline();
+            }
         } catch (error) {
-            console.error("Error en login", error.message);
-            Alert.alert("Error", "Credenciales inválidas. Intenta de nuevo.");
+            if (isOnline) {
+                try {
+                    console.log("Login online falló, intentando offline...");
+                    await handleLoginOffline();
+                } catch (offlineError) {
+                    Alert.alert(
+                        "Error",
+                        "Credenciales inválidas. Verifica tu email y contraseña."
+                    );
+                }
+            } else {
+                Alert.alert(
+                    "Error",
+                    "No se encontraron credenciales guardadas. Debes iniciar sesión al menos una vez con conexión a internet."
+                );
+            }
         } finally {
             setIsLoading(false);
         }
@@ -101,7 +187,7 @@ export default function LoginScreen({ navigation }) {
                         {/* Header */}
                         <View style={styles.header}>
                             <View style={[styles.iconContainer, { backgroundColor: colors.primary + '20' }]}>
-                                <Text style={styles.iconText}></Text>
+                                <Text style={styles.iconText}>🔐</Text>
                             </View>
                             <Text style={[styles.title, { color: colors.text, fontSize: 32 }]}>
                                 Iniciar Sesión
@@ -109,6 +195,15 @@ export default function LoginScreen({ navigation }) {
                             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                                 Ingresa tus credenciales para continuar
                             </Text>
+
+                            {/* Indicador de estado de conexión */}
+                            {!isOnline && (
+                                <View style={[styles.offlineBadge, { backgroundColor: colors.primary + '20' }]}>
+                                    <Text style={[styles.offlineBadgeText, { color: colors.primary }]}>
+                                        📡 Modo Offline
+                                    </Text>
+                                </View>
+                            )}
                         </View>
 
                         {/* Form */}
@@ -263,6 +358,16 @@ const styles = StyleSheet.create({
     subtitle: {
         fontSize: 15,
         textAlign: 'center',
+    },
+    offlineBadge: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        marginTop: 12,
+    },
+    offlineBadgeText: {
+        fontSize: 13,
+        fontWeight: '600',
     },
     form: {
         width: '100%',

@@ -16,6 +16,12 @@ import { createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../services/firebaseConfig";
 import { Colors } from '../constants/Colors';
 import { useColorScheme } from 'react-native';
+import NetInfo from "@react-native-community/netinfo";
+import { useAuth } from "../contexts/MyAuthContext";
+import {
+    saveUserLocally,
+    markUserForSync
+} from "../services/offline";
 
 export default function RegisterScreen({ navigation }) {
     const [email, setEmail] = useState("");
@@ -23,11 +29,14 @@ export default function RegisterScreen({ navigation }) {
     const [isLoading, setIsLoading] = useState(false);
     const [emailFocused, setEmailFocused] = useState(false);
     const [passwordFocused, setPasswordFocused] = useState(false);
+    const [isOnline, setIsOnline] = useState(true);
 
     const colorScheme = useColorScheme() ?? 'light';
     const colors = Colors[colorScheme];
 
-    // Animaciones
+    //obtiene updateUser del context
+    const { updateUser } = useAuth();
+
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(30)).current;
 
@@ -44,7 +53,76 @@ export default function RegisterScreen({ navigation }) {
                 useNativeDriver: true,
             }),
         ]).start();
+
+        const unsubscribe = NetInfo.addEventListener(state => {
+            setIsOnline(state.isConnected);
+        });
+
+        return () => unsubscribe();
     }, []);
+
+    const handleRegisterOnline = async () => {
+        try {
+            const userCredential = await createUserWithEmailAndPassword(
+                auth,
+                email,
+                password
+            );
+
+            // esto para guardar el usuario localmente por si acaso
+            try {
+                await saveUserLocally(email, password);
+            } catch (e) {
+                console.log("Error al guardar localmente (ya puede existir):", e.message);
+            }
+
+            console.log("✅ Usuario registrado (online):", userCredential.user.email);
+
+            const userData = {
+                email: userCredential.user.email,
+                uid: userCredential.user.uid,
+                isOnline: true
+            };
+            await updateUser(userData);
+
+            Alert.alert(
+                "¡Registro exitoso!",
+                "Tu cuenta ha sido creada. ¡Bienvenido!",
+                [{ text: "Continuar" }]
+            );
+
+        } catch (error) {
+            console.error("Error en registro online", error.message);
+            throw error;
+        }
+    };
+
+    const handleRegisterOffline = async () => {
+        try {
+            const newUser = await saveUserLocally(email, password);
+            await markUserForSync(email, password);
+
+            console.log("✅ Usuario registrado (offline):", email);
+
+            //auto login, actualiza context despues del registro
+            const userData = {
+                email: newUser.email,
+                uid: newUser.uid,
+                isOnline: false
+            };
+            await updateUser(userData);
+
+            Alert.alert(
+                "¡Registro offline exitoso!",
+                "Tu cuenta ha sido creada localmente. Se sincronizará con el servidor cuando tengas conexión a internet.\n\n¡Bienvenido!",
+                [{ text: "Continuar" }]
+            );
+
+        } catch (error) {
+            console.error("Error en registro offline", error.message);
+            throw error;
+        }
+    };
 
     const handleRegister = async () => {
         if (!email || !password) {
@@ -57,20 +135,35 @@ export default function RegisterScreen({ navigation }) {
             return;
         }
 
+        // validación básica de email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            Alert.alert("Error", "Por favor ingresa un correo electrónico válido");
+            return;
+        }
+
+        //intento de registro
         setIsLoading(true);
         try {
-            const userCredential = await createUserWithEmailAndPassword(
-                auth,
-                email,
-                password
-            );
-            console.log("Usuario registrado:", userCredential.user.email);
-            Alert.alert("Registro exitoso", "Ya puedes iniciar sesión");
-            navigation.navigate("Login");
-
+            if (isOnline) {
+                await handleRegisterOnline();
+            } else {
+                await handleRegisterOffline();
+            }
         } catch (error) {
-            console.error("Error", error.message);
-            Alert.alert("Error", error.message);
+            let errorMessage = "Ocurrió un error al crear la cuenta";
+
+            if (error.message.includes("ya existe")) {
+                errorMessage = "Este correo ya está registrado";
+            } else if (error.code === "auth/email-already-in-use") {
+                errorMessage = "Este correo ya está registrado en el sistema";
+            } else if (error.code === "auth/invalid-email") {
+                errorMessage = "El correo electrónico no es válido";
+            } else if (error.code === "auth/weak-password") {
+                errorMessage = "La contraseña es demasiado débil";
+            }
+
+            Alert.alert("Error", errorMessage);
         } finally {
             setIsLoading(false);
         }
@@ -114,6 +207,15 @@ export default function RegisterScreen({ navigation }) {
                             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                                 Regístrate para comenzar a gestionar tu inventario
                             </Text>
+
+                            {/* Indicador de estado de conexión */}
+                            {!isOnline && (
+                                <View style={[styles.offlineBadge, { backgroundColor: colors.primary + '20' }]}>
+                                    <Text style={[styles.offlineBadgeText, { color: colors.primary }]}>
+                                        📡 Modo Offline - Registro local
+                                    </Text>
+                                </View>
+                            )}
                         </View>
 
                         {/* Form */}
@@ -190,9 +292,15 @@ export default function RegisterScreen({ navigation }) {
                                 activeOpacity={0.8}
                             >
                                 <Text style={styles.buttonText}>
-                                    {isLoading ? "Creando cuenta..." : "Registrarse"}
+                                    {isLoading ? "Creando cuenta..." : isOnline ? "Registrarse" : "Registrarse (Offline)"}
                                 </Text>
                             </TouchableOpacity>
+
+                            {!isOnline && (
+                                <Text style={[styles.offlineNote, { color: colors.textSecondary }]}>
+                                    ℹ️ Tu cuenta se creará localmente y se sincronizará cuando tengas conexión
+                                </Text>
+                            )}
 
                             {/* Divider */}
                             <View style={styles.divider}>
@@ -274,6 +382,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         lineHeight: 22,
     },
+    offlineBadge: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        marginTop: 12,
+    },
+    offlineBadgeText: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
     form: {
         width: '100%',
     },
@@ -306,6 +424,12 @@ const styles = StyleSheet.create({
         fontSize: 12,
         marginTop: 6,
         marginLeft: 4,
+    },
+    offlineNote: {
+        fontSize: 13,
+        textAlign: 'center',
+        marginTop: 12,
+        lineHeight: 18,
     },
     button: {
         height: 56,

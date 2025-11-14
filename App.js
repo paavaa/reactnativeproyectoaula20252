@@ -38,10 +38,7 @@ export default function App() {
                 </Text>
               </View>
             )}
-            <Button
-              title={forceOffline ? "Volver a modo Online" : "Forzar modo Offline"}
-              onPress={toggleOffline}
-            />
+
             <AppNavigator />
           </View>
 
